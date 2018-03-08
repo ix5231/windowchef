@@ -67,7 +67,7 @@ struct client {
 	xcb_window_t window;
 	struct window_geom geom;
 	struct window_geom orig_geom;
-	bool maxed, hmaxed, vmaxed, monocled;
+	bool maxed, hmaxed, vmaxed, monocled, above, below;
 	struct list_item *item;
 	struct list_item *focus_item;
 	struct monitor *monitor;

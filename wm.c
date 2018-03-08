@@ -276,7 +276,8 @@ setup(void)
 		ewmh->_NET_NUMBER_OF_DESKTOPS      , ewmh->_NET_CURRENT_DESKTOP         ,
 		ewmh->_NET_ACTIVE_WINDOW           , ewmh->_NET_WM_STATE                ,
 		ewmh->_NET_WM_STATE_FULLSCREEN     , ewmh->_NET_WM_STATE_MAXIMIZED_VERT ,
-		ewmh->_NET_WM_STATE_MAXIMIZED_HORZ , ewmh->_NET_WM_NAME                 ,
+		ewmh->_NET_WM_STATE_MAXIMIZED_HORZ , ewmh->_NET_WM_STATE_ABOVE          ,
+		ewmh->_NET_WM_STATE_BELOW          , ewmh->_NET_WM_NAME                 ,
 		ewmh->_NET_WM_ICON_NAME            , ewmh->_NET_WM_WINDOW_TYPE          ,
 		ewmh->_NET_WM_WINDOW_TYPE_DOCK     , ewmh->_NET_WM_PID                  ,
 		ewmh->_NET_WM_WINDOW_TYPE_TOOLBAR  , ewmh->_NET_WM_WINDOW_TYPE_DESKTOP  ,
@@ -699,8 +700,9 @@ setup_window(xcb_window_t win)
 				   = client->geom.height
 				   = client->min_width = client->min_height = 0;
 	client->width_inc = client->height_inc = 1;
-	client->maxed  = client->hmaxed = client->vmaxed
-		= client->monocled = client->geom.set_by_user = false;
+	client->maxed = client->hmaxed = client->vmaxed
+		= client->monocled = client->above = client->below
+		= client->geom.set_by_user = false;
 	client->monitor = NULL;
 	client->mapped  = false;
 	client->group   = NULL_GROUP;
@@ -814,8 +816,25 @@ set_focused_last_best()
 static void
 raise_window(xcb_window_t win)
 {
-	uint32_t values[1] = { XCB_STACK_MODE_ABOVE };
-	xcb_configure_window(conn, win, XCB_CONFIG_WINDOW_STACK_MODE, values);
+	uint32_t values_above[1] = { XCB_STACK_MODE_ABOVE };
+	uint32_t values_below[1] = { XCB_STACK_MODE_BELOW };
+	struct client *client;
+	struct list_item *item;
+
+	xcb_configure_window(conn, win, XCB_CONFIG_WINDOW_STACK_MODE, values_above);
+	for (item = win_list; item != NULL; item = item->next) {
+		client = item->data;
+		if (client->above) {
+			xcb_configure_window(conn, client->window, XCB_CONFIG_WINDOW_STACK_MODE, values_above);
+		}
+	}
+
+	for (item = win_list; item != NULL; item = item->next) {
+		client = item->data;
+		if (client->below) {
+			xcb_configure_window(conn, client->window, XCB_CONFIG_WINDOW_STACK_MODE, values_below);
+		}
+	}
 }
 
 /*
@@ -1146,6 +1165,49 @@ monocle_window(struct client *client, int16_t mon_x, int16_t mon_y, uint16_t mon
 	client->monocled = true;
 	set_focused_no_raise(client);
 
+	update_ewmh_wm_state(client);
+}
+
+static void
+above_window(struct client *client)
+{
+	if (client == NULL)
+		return;
+
+    client->below = false;
+
+	client->above = true;
+	set_focused(client);
+
+	update_ewmh_wm_state(client);
+}
+
+static void
+below_window(struct client *client)
+{
+	if (client == NULL)
+		return;
+
+    client->above = false;
+
+	client->below = true;
+	set_focused(client);
+
+	update_ewmh_wm_state(client);
+}
+
+static void
+unabove_window(struct client *client)
+{
+	/*xcb_atom_t state[] = {
+		XCB_ICCCM_WM_STATE_NORMAL,
+		XCB_NONE
+	};
+
+	xcb_change_property(conn, XCB_PROP_MODE_REPLACE, client->window,
+			ewmh->_NET_WM_STATE, ewmh->_NET_WM_STATE, 32, 2, state);*/
+
+    client->above = client->below = false;
 	update_ewmh_wm_state(client);
 }
 
@@ -2106,6 +2168,12 @@ update_ewmh_wm_state(struct client *client)
 	if (client->hmaxed) {
 		HANDLE_WM_STATE(MAXIMIZED_HORZ);
 	}
+	if (client->above) {
+		HANDLE_WM_STATE(ABOVE);
+	}
+	if (client->below) {
+		HANDLE_WM_STATE(BELOW);
+	}
 
 	xcb_ewmh_set_wm_state(ewmh, client->window, i, values);
 }
@@ -2159,6 +2227,30 @@ handle_wm_state(struct client *client, xcb_atom_t state, unsigned int action)
 				unmaximize_window(client);
 			else
 				hmaximize_window(client, mon_x, mon_w);
+		}
+	} else if (state == ewmh->_NET_WM_STATE_ABOVE) {
+		if (action == XCB_EWMH_WM_STATE_ADD) {
+			above_window(client);
+		} else if (action == XCB_EWMH_WM_STATE_REMOVE) {
+			if (client->above)
+				unabove_window(client);
+		} else if (action == XCB_EWMH_WM_STATE_TOGGLE) {
+			if (client->above)
+				unabove_window(client);
+			else
+				above_window(client);
+		}
+	} else if (state == ewmh->_NET_WM_STATE_BELOW) {
+		if (action == XCB_EWMH_WM_STATE_ADD) {
+			below_window(client);
+		} else if (action == XCB_EWMH_WM_STATE_REMOVE) {
+			if (client->below)
+				unabove_window(client);
+		} else if (action == XCB_EWMH_WM_STATE_TOGGLE) {
+			if (client->below)
+				unabove_window(client);
+			else
+				below_window(client);
 		}
 	}
 }
